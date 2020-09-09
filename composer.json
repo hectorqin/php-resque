@@ -1,0 +1,55 @@
+{
+	"name": "hectorqin/php-resque",
+	"type": "library",
+	"description": "Redis backed library for creating background jobs and processing them later. Based on resque for Ruby.",
+	"keywords": ["job", "background", "redis", "resque"],
+	"homepage": "https://github.com/hectorqin/php-resque",
+	"license": "MIT",
+	"authors": [
+		{
+			"name": "hectorqin",
+			"email": "hectorqin@163.com"
+		}
+	],
+	"require": {
+		"php": ">=7.0.0",
+		"ext-pcntl": "*",
+		"psr/log": "~1.0"
+	},
+	"suggest": {
+		"ext-proctitle": "Allows php-resque to rename the title of UNIX processes to show the status of a worker.",
+		"ext-redis": "Native PHP extension for Redis connectivity."
+	},
+	"require-dev": {
+		"phpunit/phpunit": "3.7.*"
+	},
+	"bin": [
+		"bin/resque"
+	],
+	"autoload": {
+		"psr-4": {
+			"Resque\\": "src"
+		},
+        "files": [
+          "src/helper.php"
+        ]
+	},
+    "autoload-dev": {
+        "psr-4": {
+            "Resque\\Tests\\": "tests/Resque/"
+        }
+    },
+    "extra": {
+        "think-config": {
+            "resque": "src/config.php"
+        },
+        "think": {
+            "services": [
+                "Resque\\ThinkPHP\\Service"
+            ],
+            "config":{
+                "resque": "src/config.php"
+            }
+        }
+    }
+}
