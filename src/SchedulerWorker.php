@@ -14,17 +14,10 @@ use Psr\Log\LogLevel;
  */
 class SchedulerWorker implements WorkerInterface
 {
-    const LOG_NONE    = 0;
-    const LOG_NORMAL  = 1;
-    const LOG_VERBOSE = 2;
     /**
      * @var LoggerInterface Logging object that impliments the PSR-3 LoggerInterface
      */
     public $logger;
-    /**
-     * @var int Current log level of this worker.
-     */
-    public $logLevel = 0;
 
     /**
      * @var int Interval to sleep for between checking schedules.
@@ -39,11 +32,11 @@ class SchedulerWorker implements WorkerInterface
      */
 	private $shutdown = false;
 
-    private $queues = '';
-
     private $totalLoop = 0;
     private $totalJob = 0;
     private $busy = false;
+
+    private $workerPid = 0;
 
     /**
      * Instantiate a new worker, given a list of queues that it should be working
@@ -58,13 +51,13 @@ class SchedulerWorker implements WorkerInterface
      */
     public function __construct()
     {
-        $this->logger = new Log();
-
         $this->hostname = php_uname('n');
 
         $this->id = $this->hostname . ':' . getmypid() . ':' . ResqueScheduler::$delayQueueName;
 
         $this->logTag = 'SchedulerWorker:' . ResqueScheduler::$delayQueueName . ':' . \getmypid();
+
+        $this->workerPid = \getmypid();
     }
 
     /**
@@ -96,7 +89,7 @@ class SchedulerWorker implements WorkerInterface
             }
             $this->sleep();
         }
-        Event::trigger('beforeStop', $this);
+        Event::trigger('onWorkerStop', $this);
         $this->unregisterWorker();
     }
 
@@ -177,6 +170,9 @@ class SchedulerWorker implements WorkerInterface
      */
     public function log($level, $message, $context = [])
     {
+        if (!$this->logger) {
+            $this->logger = new Log();
+        }
         $this->logger->log($level, "[" . $this->logTag . "] " . $message, $context);
     }
 
@@ -186,8 +182,13 @@ class SchedulerWorker implements WorkerInterface
     private function startup()
     {
         $this->registerSigHandlers();
-        Event::trigger('beforeFirstFork', $this);
+        Event::trigger('onWorkerStart', $this);
         $this->registerWorker();
+        \register_shutdown_function(function() {
+            if ($this->workerPid == \getmypid()) {
+                $this->unregisterWorker();
+            }
+        });
     }
 
     /**
@@ -236,14 +237,16 @@ class SchedulerWorker implements WorkerInterface
     public function writeStatistics()
     {
         $statisticsFile = WorkerManager::getConf('STATISTICS_FILE');
-        $workerStatusStr = posix_getpid() . "\t" . str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 7)
-            . " " . str_pad(static::class, WorkerManager::$_maxWorkerTypeLength)
-            . " ";
-        $workerStatusStr .= str_pad(ResqueScheduler::$delayQueueName, WorkerManager::$_maxQueueNameLength)
-            . " " .  str_pad($this->totalLoop, 13)
-            . " " . str_pad($this->totalJob, 13)
-            . " " . str_pad($this->busy ? '[busy]' : '[idle]', 6) . "\n";
-        file_put_contents($statisticsFile, $workerStatusStr, FILE_APPEND);
+
+        file_put_contents($statisticsFile,
+            str_pad(posix_getpid(), 10) .
+            str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 8) .
+            str_pad(static::class, WorkerManager::$_maxWorkerTypeLength) .
+            str_pad(ResqueScheduler::$delayQueueName, WorkerManager::$_maxQueueNameLength) .
+            str_pad(Timer::count(), 8) .
+            str_pad($this->totalLoop, 13) .
+            str_pad($this->totalJob, 13) .
+            str_pad($this->busy ? '[busy]' : '[idle]', 6) . "\n", FILE_APPEND);
     }
 
     /**

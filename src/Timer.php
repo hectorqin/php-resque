@@ -26,8 +26,8 @@ class Timer
     /**
      * Tasks that based on ALARM signal.
      * [
-     *   run_time => [[$func, $args, $persistent, time_interval],[$func, $args, $persistent, time_interval],..]],
-     *   run_time => [[$func, $args, $persistent, time_interval],[$func, $args, $persistent, time_interval],..]],
+     *   run_time => [[$func, $args, $persistent, time_interval, $uniqID],[$func, $args, $persistent, time_interval, $uniqID],..]],
+     *   run_time => [[$func, $args, $persistent, time_interval, $uniqID],[$func, $args, $persistent, time_interval, $uniqID],..]],
      *   ..
      * ]
      *
@@ -75,13 +75,14 @@ class Timer
     /**
      * Add a timer.
      *
-     * @param float    $time_interval
-     * @param callable $func
-     * @param mixed    $args
-     * @param bool     $persistent
+     * @param float    $time_interval  回调间隔
+     * @param callable $func  回调函数
+     * @param mixed    $args  回调参数
+     * @param bool     $persistent 是否周期性任务
+     * @param string   $uniqID uniqID
      * @return int/false
      */
-    public static function add($time_interval, $func, $args = array(), $persistent = true)
+    public static function add($time_interval, $func, $args = array(), $persistent = true, $uniqID = null)
     {
         if ($time_interval <= 0) {
             WorkerManager::log(new Exception("bad time_interval"));
@@ -104,11 +105,12 @@ class Timer
 
         $time_now = time();
         $run_time = $time_now + $time_interval;
+        $uniqID = $uniqID ?: (\uniqid("timer_") . \rand(11111, 99999));
         if (!isset(self::$_tasks[$run_time])) {
             self::$_tasks[$run_time] = array();
         }
-        self::$_tasks[$run_time][] = array($func, (array)$args, $persistent, $time_interval);
-        return 1;
+        self::$_tasks[$run_time][] = array($func, (array)$args, $persistent, $time_interval, $uniqID);
+        return $uniqID;
     }
 
 
@@ -132,13 +134,14 @@ class Timer
                     $task_args     = $one_task[1];
                     $persistent    = $one_task[2];
                     $time_interval = $one_task[3];
+                    $uniqID        = $one_task[4];
                     try {
                         call_user_func_array($task_func, $task_args);
                     } catch (\Exception $e) {
                         WorkerManager::log($e);
                     }
                     if ($persistent) {
-                        self::add($time_interval, $task_func, $task_args);
+                        self::add($time_interval, $task_func, $task_args, $persistent, $uniqID);
                     }
                 }
                 unset(self::$_tasks[$run_time]);
@@ -158,7 +161,15 @@ class Timer
             return self::$_event->del($timer_id, \Workerman\Events\EventInterface::EV_TIMER);
         }
 
-        return false;
+        foreach (self::$_tasks as $run_time => &$task_data) {
+            foreach ($task_data as $index => $one_task) {
+                if ($one_task[4] === $timer_id) {
+                    unset($task_data[$index]);
+                }
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -173,5 +184,14 @@ class Timer
         if (self::$_event) {
             self::$_event->clearAllTimer();
         }
+    }
+
+    /**
+     * 定时器计数
+     * @return int
+     */
+    public static function count()
+    {
+        return count(self::$_tasks);
     }
 }

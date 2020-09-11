@@ -9,55 +9,55 @@ class StatsListener implements ListenerInterface
 {
     public function init()
     {
-        Event::listen('beforeFirstFork', [$this, 'beforeFirstFork']);
-        Event::listen('beforeFork', [$this, 'beforeFork']);
-        Event::listen('afterFork', [$this, 'afterFork']);
-        Event::listen('beforePerform', [$this, 'beforePerform']);
-        Event::listen('afterPerform', [$this, 'afterPerform']);
-        Event::listen('onFailure', [$this, 'onFailure']);
-        Event::listen('beforeStop', [$this, 'beforeStop']);
+        Event::listen('onWorkerStart', [$this, 'onWorkerStart']);
+        Event::listen('beforeForkExecutor', [$this, 'beforeForkExecutor']);
+        Event::listen('afterForkExecutor', [$this, 'afterForkExecutor']);
+        Event::listen('beforePerformJob', [$this, 'beforePerformJob']);
+        Event::listen('afterPerformJob', [$this, 'afterPerformJob']);
+        Event::listen('onJobFailed', [$this, 'onJobFailed']);
+        Event::listen('onWorkerStop', [$this, 'onWorkerStop']);
     }
 
-    public function beforeFirstFork($worker)
+    public function onWorkerStart($worker)
     {
         // echo "Worker started. Listening on queues: " . implode(', ', $worker->queues(false)) . "\n";
         Stat::incr('forked:worker');
     }
 
-    public function beforeFork($job)
+    public function beforeForkExecutor($job)
     {
         // echo "Just about to fork to run " . $job;
     }
 
-    public function afterFork($job)
+    public function afterForkExecutor($job)
     {
         // echo "Forked to run " . $job . ". This is the child process.\n";
     }
 
-    public function beforePerform($job)
+    public function beforePerformJob($job)
     {
         // echo "Cancelling " . $job . "\n";
         //  throw new Resque_Job_DontPerform;
     }
 
-    public function afterPerform($job)
+    public function afterPerformJob($job)
     {
         // echo "Just performed " . $job . "\n";
         Stat::incr('processed:' . $job->queue);
     }
 
-    public function onFailure($exception, $job)
+    public function onJobFailed($exception, $job)
     {
         // echo $job . " threw an exception:\n" . $exception;
         Stat::incr('failed:' . $job->queue);
     }
 
-    public function beforeStop($worker)
+    public function onWorkerStop($worker)
     {
         Stat::incr('stoped:worker');
         $workerId = (string) $worker;
         $redis    = Resque::redis();
-        $redis->rpush("workers:history", json_encode(array(
+        $redis->rpush("workers:history", \serialize(array(
             'name'      => $workerId,
             'started'   => $redis->get('worker:' . $workerId . ':started'),
             'failed'    => $redis->get('stat:failed:' . $workerId) ?: 0,

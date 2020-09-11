@@ -36,6 +36,8 @@ class JobStatus
         self::STATUS_COMPLETE,
     );
 
+    private $started = null;
+
     /**
      * Setup a new instance of the job monitor class for the supplied job ID.
      *
@@ -59,7 +61,7 @@ class JobStatus
             'updated' => time(),
             'started' => time(),
         );
-        Resque::redis()->set('job:' . $id . ':status', json_encode($statusPacket));
+        Resque::redis()->set('job:' . $id . ':status', serialize($statusPacket));
     }
 
     /**
@@ -78,7 +80,9 @@ class JobStatus
             $this->isTracking = false;
             return false;
         }
+        $statusPacket = unserialize(Resque::redis()->get((string) $this));
 
+        $this->started = $statusPacket['started'];
         $this->isTracking = true;
         return true;
     }
@@ -95,10 +99,11 @@ class JobStatus
         }
 
         $statusPacket = array(
+            'started' => $this->started ?: time(),
             'status'  => $status,
             'updated' => time(),
         );
-        Resque::redis()->set((string) $this, json_encode($statusPacket));
+        Resque::redis()->set((string) $this, serialize($statusPacket));
 
         // Expire the status for completed jobs after 24 hours
         if (in_array($status, self::$completeStatuses)) {
@@ -109,18 +114,23 @@ class JobStatus
     /**
      * Fetch the status for the job being monitored.
      *
+     * @param int $onlySTatus Only return the job status.
      * @return mixed False if the status is not being monitored, otherwise the status as
      *     as an integer, based on the Resque_Job_Status constants.
      */
-    public function get()
+    public function get($onlyStatus = true)
     {
         if (!$this->isTracking()) {
             return false;
         }
 
-        $statusPacket = json_decode(Resque::redis()->get((string) $this), true);
+        $statusPacket = unserialize(Resque::redis()->get((string) $this));
         if (!$statusPacket) {
             return false;
+        }
+
+        if (!$onlyStatus) {
+            return $statusPacket;
         }
 
         return $statusPacket['status'];

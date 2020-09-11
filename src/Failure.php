@@ -22,11 +22,11 @@ class Failure
      * Create a new failed job on the backend.
      *
      * @param object $payload        The contents of the job that has just failed.
-     * @param \Exception $exception  The exception generated when the job failed to run.
+     * @param \Exception|\Throwable $exception  The exception generated when the job failed to run.
      * @param \Resque_Worker $worker Instance of Resque_Worker that was running this job when it failed.
      * @param string $queue          The name of the queue that this job was fetched from.
      */
-    public static function create($payload, Exception $exception, Worker $worker, $queue)
+    public static function create($payload, $exception, Worker $worker, $queue)
     {
         $backend = self::getBackend();
         new $backend($payload, $exception, $worker, $queue);

@@ -105,7 +105,7 @@ class Resque
      */
     public static function push($queue, $item)
     {
-        $encodedItem = json_encode($item);
+        $encodedItem = serialize($item);
         if ($encodedItem === false) {
             return false;
         }
@@ -132,7 +132,7 @@ class Resque
             return;
         }
 
-        return json_decode($item, true);
+        return \unserialize($item);
     }
 
     /**
@@ -194,7 +194,7 @@ class Resque
 
         return array(
             'queue'   => $queue,
-            'payload' => json_decode($item[1], true),
+            'payload' => \unserialize($item[1]),
         );
     }
 
@@ -330,7 +330,7 @@ class Resque
      */
     private static function matchItem($string, $items)
     {
-        $decoded = json_decode($string, true);
+        $decoded = \unserialize($string);
 
         foreach ($items as $key => $val) {
             # class name only  ex: item[0] = ['class']

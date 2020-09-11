@@ -191,7 +191,7 @@ class Job
     public function perform()
     {
         try {
-            Event::trigger('beforePerform', $this);
+            Event::trigger('beforePerformJob', $this);
 
             $instance = $this->getInstance();
             if (method_exists($instance, 'setUp')) {
@@ -204,9 +204,9 @@ class Job
                 $instance->tearDown();
             }
 
-            Event::trigger('afterPerform', $this);
+            Event::trigger('afterPerformJob', $this);
         }
-        // beforePerform/setUp have said don't perform this job. Return.
+        // beforePerformJob/setUp have said don't perform this job. Return.
          catch (DontPerform $e) {
             return false;
         }
@@ -221,7 +221,7 @@ class Job
      */
     public function fail($exception)
     {
-        Event::trigger('onFailure', array(
+        Event::trigger('onJobFailed', array(
             'exception' => $exception,
             'job'       => $this,
         ));

@@ -61,6 +61,8 @@ class Worker implements WorkerInterface
     private $totalLoop = 0;
     private $totalJob = 0;
 
+    private $workerPid = 0;
+
     /**
      * Instantiate a new worker, given a list of queues that it should be working
      * on. The list of queues should be supplied in the priority that they should
@@ -74,8 +76,6 @@ class Worker implements WorkerInterface
      */
     public function __construct($queues)
     {
-        $this->logger = new Log();
-
         if (!is_array($queues)) {
             $queues = array($queues);
         }
@@ -86,6 +86,8 @@ class Worker implements WorkerInterface
         $this->id = $this->hostname . ':' . getmypid() . ':' . implode(',', $this->queues);
 
         $this->logTag = 'Worker:' . implode(',', $this->queues) . ':' . \getmypid();
+
+        $this->workerPid = \getmypid();
     }
 
     /**
@@ -204,7 +206,7 @@ class Worker implements WorkerInterface
             }
 
             $this->log(\Psr\Log\LogLevel::NOTICE, 'Starting work on {job}', array('job' => $job));
-            Event::trigger('beforeFork', $job);
+            Event::trigger('beforeForkExecutor', $job);
             $this->totalJob++;
             $this->workingOn($job);
 
@@ -241,6 +243,7 @@ class Worker implements WorkerInterface
             $this->doneWorking();
         }
 
+        Event::trigger('onWorkerStop', $this);
         $this->unregisterWorker();
     }
 
@@ -252,7 +255,7 @@ class Worker implements WorkerInterface
     public function perform(Job $job)
     {
         try {
-            Event::trigger('afterFork', $job);
+            Event::trigger('afterForkExecutor', $job);
             $job->perform();
         } catch (Exception $e) {
             $this->log(\Psr\Log\LogLevel::CRITICAL, '{job} has failed {stack}', array('job' => $job, 'stack' => $e));
@@ -325,8 +328,14 @@ class Worker implements WorkerInterface
     {
         $this->registerSigHandlers();
         $this->pruneDeadWorkers();
-        Event::trigger('beforeFirstFork', $this);
+        Event::trigger('onWorkerStart', $this);
         $this->registerWorker();
+        \register_shutdown_function(function() {
+            // 防止子进程继承
+            if ($this->workerPid == \getmypid()) {
+                $this->unregisterWorker();
+            }
+        });
     }
 
     /**
@@ -372,14 +381,16 @@ class Worker implements WorkerInterface
     public function writeStatistics()
     {
         $statisticsFile = WorkerManager::getConf('STATISTICS_FILE');
-        $workerStatusStr = posix_getpid() . "\t" . str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 7)
-            . " " . str_pad(static::class, WorkerManager::$_maxWorkerTypeLength)
-            . " ";
-        $workerStatusStr .= str_pad(\implode(',', $this->queues), WorkerManager::$_maxQueueNameLength)
-            . " " .  str_pad($this->totalLoop, 13)
-            . " " . str_pad($this->totalJob, 13)
-            . " " . str_pad($this->currentJob ? '[busy]' : '[idle]', 6) . "\n";
-        file_put_contents($statisticsFile, $workerStatusStr, FILE_APPEND);
+
+        file_put_contents($statisticsFile,
+            str_pad(posix_getpid(), 10) .
+            str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 8) .
+            str_pad(static::class, WorkerManager::$_maxWorkerTypeLength) .
+            str_pad(\implode(',', $this->queues), WorkerManager::$_maxQueueNameLength) .
+            str_pad(Timer::count(), 8) .
+            str_pad($this->totalLoop, 13) .
+            str_pad($this->totalJob, 13) .
+            str_pad($this->currentJob ? '[busy]' : '[idle]', 6) . "\n", FILE_APPEND);
     }
 
     /**
@@ -519,7 +530,7 @@ class Worker implements WorkerInterface
         $job->worker      = $this;
         $this->currentJob = $job;
         $job->updateStatus(JobStatus::STATUS_RUNNING);
-        $data = json_encode(array(
+        $data = serialize(array(
             'queue'   => $job->queue,
             'run_at'  => strftime('%a %b %d %H:%M:%S %Z %Y'),
             'payload' => $job->payload,
@@ -560,7 +571,7 @@ class Worker implements WorkerInterface
         if (!$job) {
             return array();
         } else {
-            return json_decode($job, true);
+            return \unserialize($job);
         }
     }
 
@@ -596,6 +607,9 @@ class Worker implements WorkerInterface
      */
     public function log($level, $message, $context = [])
     {
+        if (!$this->logger) {
+            $this->logger = new Log();
+        }
         $this->logger->log($level, "[" . $this->logTag . "] " . $message, $context);
     }
 

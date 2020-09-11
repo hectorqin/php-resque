@@ -1,7 +1,10 @@
 <?php
+declare (ticks = 1);
 namespace Resque;
 
 use Psr\Log\LogLevel;
+use Resque\Crontab\Crontab;
+use Resque\Crontab\CrontabManager;
 use Resque\Listener\ListenerInterface;
 use Resque\Listener\StatsListener;
 
@@ -10,7 +13,7 @@ class WorkerManager
     const STATUS_STARTING = 1;
     const STATUS_RUNNING  = 2;
     const STATUS_SHUTDOWN = 3;
-    const VERSION = 1.0;
+    const VERSION         = 1.0;
 
     public static $_config = array(
         'DAEMONIZE'       => false,
@@ -19,12 +22,12 @@ class WorkerManager
         'INTERVAL'        => 5,
         'WORKER_GROUP'    => array(
             array(
-                "type"    => "Worker",
-                "queue"   => "deault",
-                "procNum" => 1,
+                "type"     => "Worker",
+                "queue"    => "deault",
+                "nums"     => 1,
+                "blocking" => false,
             ),
         ),
-        'BLOCKING'        => false,
         'APP_INCLUDE'     => '',
         'PREFIX'          => '',
         'PIDFILE'         => './resque.pid',
@@ -45,31 +48,47 @@ class WorkerManager
             // LogLevel::INFO,
         ],
 
-        'LISTENER' => [
+        'LISTENER'        => [
             StatsListener::class,
         ],
+
+        'MANAGER_TIMER'   => [
+
+        ],
+
+        'WORKER_CRONTAB'  => [
+
+        ]
     );
 
-    public static $logger      = null;
-    public static $workerPids  = [];
+    public static $logger     = null;
+    public static $workerPids = [];
 
     /**
      * Status info of current worker process.
      *
      * @var array
      */
-    protected static $_globalStatistics = array(
-        'startTimestamp'  => 0,
-        'workerExitInfo' => array()
-    );
+    protected static $_globalStatistics = [
+        'startTimestamp' => 0,
+        'totalLoop'      => 0,
+        'totalJob'       => 0,
+        'workerExitInfo' => [],
+    ];
     public static $_status = self::STATUS_STARTING;
 
-    public static $managerPid   = null;
+    public static $managerPid = null;
 
     public static $_maxWorkerTypeLength = 25;
 
     public static $_maxQueueNameLength = 25;
 
+    /**
+     * 获取环境配置
+     *
+     * @param string $key
+     * @return mixed
+     */
     public static function getEnv($key)
     {
         $lowerKey = \strtolower($key);
@@ -81,38 +100,66 @@ class WorkerManager
         return isset($config[$key]) ? $config[$key] : (isset($config[$lowerKey]) ? $config[$lowerKey] : null);
     }
 
+    /**
+     * 设置配置
+     * @param string $key
+     * @param mixed $value
+     * @return true
+     */
     public static function setConf($key, $value)
     {
         static::$_config[$key] = $value;
         return true;
     }
 
+    /**
+     * 获取配置
+     * @param string $key
+     * @param mixed|null $default
+     * @return mixed
+     */
     public static function getConf($key, $default = null)
     {
         return isset(static::$_config[$key]) ? static::$_config[$key] : $default;
     }
 
+    /**
+     * 启动
+     *
+     * @return void
+     * @throws Exception
+     */
     public static function run()
     {
-        // 初始化环境变量
-        static::init();
+        // 初始化配置
+        static::initConfig();
         // 解析命令
         static::parseCommand();
         // 尝试以守护进程模式运行
         static::daemonize();
         // 配置环境
-        static::initEnv();
+        static::configureEnviroment();
+        // 注册错误处理函数
+        static::registerErrorHandler();
+        // 注册事件监听器
+        static::registerEventListener();
+        // 注册Timer
+        static::registerTimer();
+        // 注册Crontab
+        static::registerCrontab();
         // 初始化所有worker实例
         static::initWorkers();
-        //  初始化所有信号处理函数
+        // 安装信号处理函数
         static::installSignal();
-        // 注册错误处理函数
-        static::installErrorHandler();
         // 监控所有子进程（worker进程）
         static::monitorWorkers();
     }
 
-    public static function init()
+    /**
+     * 初始化配置
+     * @return void
+     */
+    public static function initConfig()
     {
         foreach (static::$_config as $key => $value) {
             if (!is_null($tmp = static::getEnv($key))) {
@@ -126,13 +173,13 @@ class WorkerManager
             static::setConf('DAEMONIZE', false);
         }
 
-        static::$_status = static::STATUS_STARTING;
-        static::$_globalStatistics['startTimestamp'] = time();
-
-        Timer::init();
         // print_r(static::$_config);
     }
 
+    /**
+     * 解析命令行参数
+     * @return void
+     */
     public static function parseCommand()
     {
         // 检查运行命令的参数
@@ -186,7 +233,45 @@ class WorkerManager
                 while (!is_file($statisticsFile)) {
                     sleep(1);
                 }
-                static::log(file_get_contents($statisticsFile));
+                $content = file_get_contents($statisticsFile);
+                $arr     = explode("\n", $content);
+
+                $totalMemory = 0;
+                $totalTimers = 0;
+                $totalLoop   = 0;
+                $totalJob    = 0;
+                $contentArr  = [];
+                $workersInfo = [];
+                foreach ($arr as $value) {
+                    $items = preg_split('/ +/', $value);
+                    if (is_numeric($items[0])) {
+                        $totalMemory += str_replace("M", "", $items[1]);
+                        $totalTimers += $items[4];
+                        $totalLoop += $items[5];
+                        $totalJob += $items[6];
+                        $workersInfo[$items[2]][] = $value;
+                    } else {
+                        $contentArr[] = $value;
+                    }
+                }
+                $content = \implode("\n", $contentArr);
+                foreach ($workersInfo as $group) {
+                    foreach ($group as $worker) {
+                        $content .= $worker . "\n";
+                    }
+                }
+
+                $content .= "----------------------------------------------PROCESS STATUS---------------------------------------------------\n";
+                $content .= \str_pad("Summary", 10) .
+                str_pad($totalMemory . 'M', 8) .
+                str_pad('-', static::$_maxWorkerTypeLength) .
+                str_pad('-', static::$_maxQueueNameLength) .
+                str_pad($totalTimers, 8) .
+                str_pad($totalLoop, 13) .
+                str_pad($totalJob, 13) .
+                str_pad("[Summary]", 6) . "\n";
+
+                static::log($content);
                 exit(0);
                 break;
             // 重启 worker
@@ -263,8 +348,15 @@ class WorkerManager
         }
     }
 
-    public static function initEnv()
+    /**
+     * 配置环境
+     * @return void
+     */
+    public static function configureEnviroment()
     {
+        static::$_status                             = static::STATUS_STARTING;
+        static::$_globalStatistics['startTimestamp'] = time();
+
         $APP_INCLUDE = static::getConf('APP_INCLUDE');
         foreach (glob($APP_INCLUDE) as $file) {
             if (file_exists($file)) {
@@ -295,22 +387,26 @@ class WorkerManager
             Redis::prefix(static::getConf('PREFIX'));
         }
         unset($APP_INCLUDE, $logLevel, $logger);
+
         static::setProcessTitle("resque-1.2: resque worker manager process");
     }
 
-    public static function initWorkers()
+    /**
+     * 注册错误处理函数
+     * @return void
+     */
+    public static function registerErrorHandler()
     {
-        $WORKER_GROUP = static::getConf('WORKER_GROUP');
+        register_shutdown_function("\\Resque\\WorkerManager::fatalError");
+    }
 
-        if (empty($WORKER_GROUP) || count($WORKER_GROUP) == 0) {
-            throw new Exception('please set the WORKER_GROUP options');
-        }
-
-        if (static::getConf('NO_FORK') && count($WORKER_GROUP) > 1) {
-            throw new Exception('only support one WORKER_GROUP');
-        }
-
-        // 注册监听事件
+    /**
+     * 注册事件监听
+     * @return void
+     */
+    public static function registerEventListener()
+    {
+        // 注册worker监听事件
         Event::clearListeners();
         $eventListers = static::getConf('LISTENER');
         if ($eventListers) {
@@ -325,20 +421,70 @@ class WorkerManager
                 }
             }
         }
+    }
+
+    /**
+     * 注册Timer
+     * @return void
+     */
+    public static function registerTimer()
+    {
+        $managerTimers = static::getConf('MANAGER_TIMER');
+        if ($managerTimers) {
+            foreach ($managerTimers as $timer) {
+                Timer::add($timer['interval'], $timer['handler'], $timer['params'] ?? [], $timer['persistent'] ?? true);
+            }
+        }
+
+        Timer::init();
+    }
+
+    /**
+     * 注册Crontab
+     * @return void
+     */
+    public static function registerCrontab()
+    {
+        // 注册 crontab
+        $crontabs = static::getConf('WORKER_CRONTAB');
+        if ($crontabs) {
+            $crontabManager = CrontabManager::instance();
+            foreach ($crontabs as $crontab) {
+                if (!$crontabManager->register(new Crontab($crontab))) {
+                    throw new Exception("Invalid crontab rule {$crontab['rule']}");
+                }
+            }
+        }
+    }
+
+    /**
+     * 初始化所有worker实例
+     * @return void
+     * @throws Exception
+     */
+    public static function initWorkers()
+    {
+        $WORKER_GROUP = static::getConf('WORKER_GROUP');
+
+        if (empty($WORKER_GROUP) || count($WORKER_GROUP) == 0) {
+            throw new Exception('please set the WORKER_GROUP options');
+        }
+
+        if (static::getConf('NO_FORK') && count($WORKER_GROUP) > 1) {
+            throw new Exception('only support one WORKER_GROUP');
+        }
 
         foreach ($WORKER_GROUP as $groupId => $worker) {
             if (isset($worker['queue'])) {
-                static::log("*** Init workerGroup {$groupId}, procNum {$worker['procNum']}, working on {$worker['queue']}");
+                static::log("*** Init workerGroup {$groupId}, {$worker['nums']} processes, working on {$worker['queue']}");
             } else {
                 $worker['queue'] = '';
-                static::log("*** Init workerGroup {$groupId}, procNum {$worker['procNum']}");
+                static::log("*** Init workerGroup {$groupId}, {$worker['nums']} processes");
             }
-            for ($i = 0; $i < (int) $worker['procNum']; ++$i) {
+            for ($i = 0; $i < (int) $worker['nums']; ++$i) {
                 $interval = isset($worker['interval']) ? $worker['interval'] : static::getConf('INTERVAL');
-                $blocking = isset($worker['blocking']) ? $worker['blocking'] : static::getConf('BLOCKING');
                 static::initOneWorker($worker['queue'], $worker['type'], [
                     'interval' => $interval,
-                    'blocking' => $blocking,
                     'groupID'  => $groupId,
                 ] + $worker);
             }
@@ -381,7 +527,7 @@ class WorkerManager
             $worker->setLogger(static::$logger);
             static::log('*** Starting worker ' . $worker);
             if ($worker instanceof \Resque\Worker) {
-                $worker->work($option['interval'], $option['blocking']);
+                $worker->work($option['interval'], $option['blocking'] ?? false);
             } else {
                 $worker->work($option['interval']);
             }
@@ -393,11 +539,13 @@ class WorkerManager
             exit();
         } else if ($pid > 0) { // master, record the child pid
             static::$workerPids[$pid] = array(
-                "queue"    => $queue,
-                "type"     => $type,
-                "option"   => $option,
+                "queue"  => $queue,
+                "type"   => $type,
+                "option" => $option,
             );
         } else if ($pid === 0) { // Child, start the worker 子进程开启worker
+            // 子进程清除所有timer
+            Timer::delAll();
             $worker = new $type($queueArr);
             if (!$worker instanceof \Resque\WorkerInterface) {
                 static::stopAll();
@@ -409,9 +557,8 @@ class WorkerManager
             }
             $worker->setLogger(static::$logger);
             static::log('*** Starting worker ' . $worker);
-            static::installErrorHandler();
             if ($worker instanceof \Resque\Worker) {
-                $worker->work($option['interval'], $option['blocking']);
+                $worker->work($option['interval'], $option['blocking'] ?? false);
             } else {
                 $worker->work($option['interval']);
             }
@@ -423,7 +570,7 @@ class WorkerManager
      * 安装信号处理函数
      * @return void
      */
-    protected static function installSignal()
+    public static function installSignal()
     {
         static::log("*** Install signal handle pid " . getmypid());
         // stop
@@ -458,10 +605,14 @@ class WorkerManager
         }
     }
 
+    /**
+     * 写入进程状态
+     * @return void
+     */
     public static function writeStatisticsToStatusFile()
     {
         $statisticsFile = static::getConf('STATISTICS_FILE');
-        $workerGroup = static::getConf('WORKER_GROUP');
+        $workerGroup    = static::getConf('WORKER_GROUP');
 
         // file_put_contents($statisticsFile, json_encode(self::$workerPids)."\n", FILE_APPEND);
 
@@ -469,14 +620,15 @@ class WorkerManager
         file_put_contents($statisticsFile,
             "----------------------------------------------GLOBAL STATUS----------------------------------------------------\n", FILE_APPEND);
         file_put_contents($statisticsFile,
-            'PHP-Resque version:' . static::VERSION . "          PHP version:" . PHP_VERSION . "\n", FILE_APPEND);
-        file_put_contents($statisticsFile, 'start time:' . date('Y-m-d H:i:s',
-                static::$_globalStatistics['startTimestamp']) . '   run ' . floor((time() - static::$_globalStatistics['startTimestamp']) / (24 * 60 * 60)) . ' days ' . floor(((time() - static::$_globalStatistics['startTimestamp']) % (24 * 60 * 60)) / (60 * 60)) . " hours   \n",
-            FILE_APPEND);
-        $load_str = 'load average: ' . implode(", ", $loadavg);
-        file_put_contents($statisticsFile, str_pad($load_str, 33) . "\n", FILE_APPEND);
+            str_pad('PHP-Resque version: ', 20) . static::VERSION . "             PHP version: " . PHP_VERSION . "\n", FILE_APPEND);
         file_put_contents($statisticsFile,
-            count($workerGroup) . ' workers       ' . count(static::$workerPids) . " processes\n",
+            str_pad('Started at: ', 20) .
+            date('Y-m-d H:i:s', static::$_globalStatistics['startTimestamp']) .
+            '   up ' . floor((time()-static::$_globalStatistics['startTimestamp']) / (24 * 60 * 60)) . ' days ' . floor(((time()-static::$_globalStatistics['startTimestamp']) % (24 * 60 * 60)) / (60 * 60)) . " hours " . floor(((time()-static::$_globalStatistics['startTimestamp']) % (24 * 60 * 60)) % (60 * 60) / 60) . " minutes\n",
+            FILE_APPEND);
+        file_put_contents($statisticsFile, str_pad('Load averages: ', 20) . implode(", ", $loadavg) . "\n", FILE_APPEND);
+        file_put_contents($statisticsFile, str_pad('Processes stats: ', 20) . '1 workerManager(pid: ' . self::$managerPid . ')   ' .
+            count($workerGroup) . ' workers   ' . count(static::$workerPids) . " worker processes\n",
             FILE_APPEND);
         file_put_contents($statisticsFile,
             str_pad('worker_type', static::$_maxWorkerTypeLength) . " exit_status      exit_count\n", FILE_APPEND);
@@ -497,8 +649,24 @@ class WorkerManager
             "----------------------------------------------PROCESS STATUS---------------------------------------------------\n",
             FILE_APPEND);
         file_put_contents($statisticsFile,
-            "pid\tmemory  " . str_pad('worker_type',
-                static::$_maxWorkerTypeLength) . " " . str_pad('queue', static::$_maxQueueNameLength) . " " . str_pad('total_loops', 13) . " ". str_pad('total_jobs', 13) . " status\n", FILE_APPEND);
+            str_pad("pid", 10) .
+            str_pad("memory", 8) .
+            str_pad('worker_type', static::$_maxWorkerTypeLength) .
+            str_pad('queue', static::$_maxQueueNameLength) .
+            str_pad('timers', 8) .
+            str_pad('total_loops', 13) .
+            str_pad('total_jobs', 13) .
+            str_pad("status\n", 7), FILE_APPEND);
+
+        file_put_contents($statisticsFile,
+            str_pad(self::$managerPid, 10) .
+            str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 8) .
+            str_pad(static::class, static::$_maxWorkerTypeLength) .
+            str_pad('-', static::$_maxQueueNameLength) .
+            str_pad(Timer::count(), 8) .
+            str_pad(static::$_globalStatistics['totalLoop'], 13) .
+            str_pad(static::$_globalStatistics['totalJob'], 13) .
+            str_pad("[idle]", 6) . "\n", FILE_APPEND);
 
         chmod($statisticsFile, 0722);
 
@@ -520,6 +688,23 @@ class WorkerManager
             static::log("*** Stopping $workerPid ...");
             posix_kill($workerPid, SIGQUIT);
         }
+    }
+
+    /**
+     * 退出当前进程
+     * @return void
+     */
+    public static function exitNow()
+    {
+        if (static::getConf('PIDFILE')) {
+            @unlink(static::getConf('PIDFILE'));
+        }
+        if (static::getConf('STATISTICS_FILE')) {
+            @unlink(static::getConf('STATISTICS_FILE'));
+        }
+        static::log("*** Workers has been stopped");
+        static::log("*** WorkerManager exit");
+        exit(0);
     }
 
     /**
@@ -548,6 +733,7 @@ class WorkerManager
     {
         static::$_status = static::STATUS_RUNNING;
         while (1) {
+            static::$_globalStatistics['totalLoop']++;
             // 如果有信号到来，尝试触发信号处理函数
             pcntl_signal_dispatch();
             // 挂起进程，直到有子进程退出或者被信号打断
@@ -565,6 +751,7 @@ class WorkerManager
                 }
                 // 如果不是关闭状态，则补充新的进程
                 if (static::$_status !== static::STATUS_SHUTDOWN) {
+                    static::$_globalStatistics['totalJob']++;
                     if ($workerInfo) {
                         if ($status) {
                             $groupID = $workerInfo['option']['groupID'];
@@ -593,23 +780,6 @@ class WorkerManager
     }
 
     /**
-     * 退出当前进程
-     * @return void
-     */
-    public static function exitNow()
-    {
-        if (static::getConf('PIDFILE')) {
-            @unlink(static::getConf('PIDFILE'));
-        }
-        if (static::getConf('STATISTICS_FILE')) {
-            @unlink(static::getConf('STATISTICS_FILE'));
-        }
-        static::log("*** Workers has been stopped");
-        static::log("*** WorkerManager exit");
-        exit(0);
-    }
-
-    /**
      * 对象转字符串
      *
      * @param mixed $value
@@ -633,6 +803,14 @@ class WorkerManager
         }
     }
 
+    /**
+     * 记录日志
+     *
+     * @param mixed $msg
+     * @param array $extra
+     * @param string $level
+     * @return void
+     */
     public static function log($msg, $extra = array(), $level = 'info')
     {
         if (static::$logger) {
@@ -642,16 +820,15 @@ class WorkerManager
         }
     }
 
+    /**
+     * 错误处理器
+     * @return void
+     */
     public static function fatalError()
     {
         $error = error_get_last();
         if ($error !== null) {
-            error_log("PID: " . \getmypid() . "  " .  static::convertToString($error) . "\n", 3, __DIR__ . "/resque-error.log");
+            error_log("PID: " . \getmypid() . "  " . static::convertToString($error) . "\n", 3, __DIR__ . "/resque-error.log");
         }
-    }
-
-    public static function installErrorHandler()
-    {
-        register_shutdown_function("\\Resque\\WorkerManager::fatalError");
     }
 }

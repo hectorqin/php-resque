@@ -31,7 +31,7 @@ class RedisFailure implements FailureInterface
         $data->backtrace = explode("\n", $exception->getTraceAsString());
         $data->worker    = (string) $worker;
         $data->queue     = $queue;
-        $data            = json_encode($data);
-        Resque::redis()->rpush('failed', $data);
+        $data            = \serialize($data);
+        Resque::redis()->rpush('failed:' . $queue, $data);
     }
 }

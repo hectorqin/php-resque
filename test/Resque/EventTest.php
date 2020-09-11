@@ -52,9 +52,9 @@ class EventTest extends TestCase
     public function eventCallbackProvider()
     {
         return array(
-            array('beforePerform', 'beforePerformEventCallback'),
-            array('afterPerform', 'afterPerformEventCallback'),
-            array('afterFork', 'afterForkEventCallback'),
+            array('beforePerformJob', 'beforePerformJobEventCallback'),
+            array('afterPerformJob', 'afterPerformJobEventCallback'),
+            array('afterForkExecutor', 'afterForkExecutorCallback'),
         );
     }
 
@@ -72,10 +72,10 @@ class EventTest extends TestCase
         $this->assertContains($callback, $this->callbacksHit, $event . ' callback (' . $callback . ') was not called');
     }
 
-    public function testBeforeForkEventCallbackFires()
+    public function testBeforeForkExecutorEventCallbackFires()
     {
-        $event    = 'beforeFork';
-        $callback = 'beforeForkEventCallback';
+        $event    = 'beforeForkExecutor';
+        $callback = 'beforeForkExecutorEventCallback';
 
         Event::listen($event, array($this, $callback));
         Resque::enqueue('jobs', 'Test_Job', array(
@@ -100,8 +100,8 @@ class EventTest extends TestCase
 
     public function testBeforePerformEventCanStopWork()
     {
-        $callback = 'beforePerformEventDontPerformCallback';
-        Event::listen('beforePerform', array($this, $callback));
+        $callback = 'beforePerformJobEventDontPerformCallback';
+        Event::listen('beforePerformJob', array($this, $callback));
 
         $job = $this->getEventTestJob();
 
@@ -136,8 +136,8 @@ class EventTest extends TestCase
 
     public function testStopListeningRemovesListener()
     {
-        $callback = 'beforePerformEventCallback';
-        $event    = 'beforePerform';
+        $callback = 'beforePerformJobEventCallback';
+        $event    = 'beforePerformJob';
 
         Event::listen($event, array($this, $callback));
         Event::stopListening($event, array($this, $callback));
@@ -151,7 +151,7 @@ class EventTest extends TestCase
         );
     }
 
-    public function beforePerformEventDontPerformCallback($instance)
+    public function beforePerformJobEventDontPerformCallback($instance)
     {
         $this->callbacksHit[] = __FUNCTION__;
         throw new DontPerform();
@@ -187,22 +187,22 @@ class EventTest extends TestCase
         $this->callbacksHit[] = __FUNCTION__;
     }
 
-    public function beforePerformEventCallback($job)
+    public function beforePerformJobEventCallback($job)
     {
         $this->assertValidEventCallback(__FUNCTION__, $job);
     }
 
-    public function afterPerformEventCallback($job)
+    public function afterPerformJobEventCallback($job)
     {
         $this->assertValidEventCallback(__FUNCTION__, $job);
     }
 
-    public function beforeForkEventCallback($job)
+    public function beforeForkExecutorEventCallback($job)
     {
         $this->assertValidEventCallback(__FUNCTION__, $job);
     }
 
-    public function afterForkEventCallback($job)
+    public function afterForkExecutorCallback($job)
     {
         $this->assertValidEventCallback(__FUNCTION__, $job);
     }

@@ -5,26 +5,14 @@ namespace Resque;
 use Psr\Log\LogLevel;
 
 /**
- * ResqueScheduler worker to handle scheduling of delayed tasks.
- *
- * @package        ResqueScheduler
- * @author        Chris Boulton <chris@bigcommerce.com>
- * @copyright    (c) 2012 Chris Boulton
- * @license        http://www.opensource.org/licenses/mit-license.php
+ * CustomWorker to handle custom tasks.
  */
 class CustomWorker implements WorkerInterface
 {
-    const LOG_NONE    = 0;
-    const LOG_NORMAL  = 1;
-    const LOG_VERBOSE = 2;
     /**
      * @var LoggerInterface Logging object that impliments the PSR-3 LoggerInterface
      */
     public $logger;
-    /**
-     * @var int Current log level of this worker.
-     */
-    public $logLevel = 0;
 
     /**
      * @var int Interval to sleep for between checking schedules.
@@ -51,6 +39,8 @@ class CustomWorker implements WorkerInterface
     private $totalJob = 0;
     private $busy = false;
 
+    private $workerPid = 0;
+
     /**
      * Instantiate a new worker, given a list of queues that it should be working
      * on. The list of queues should be supplied in the priority that they should
@@ -64,14 +54,14 @@ class CustomWorker implements WorkerInterface
      */
     public function __construct($name = '')
     {
-        $this->logger = new Log();
-
         $this->hostname = php_uname('n');
 
         $this->name = (is_array($name) ? \implode(',', $name) : $name);
         $this->id = $this->hostname . ':' . getmypid() . ':custom_worker:' . $this->name;
 
         $this->logTag = 'CustomWorker:' . $this->name . ':' . getmypid();
+
+        $this->workerPid = \getmypid();
     }
 
     /**
@@ -114,7 +104,9 @@ class CustomWorker implements WorkerInterface
                 $this->updateProcLine('Running');
                 try {
                     $this->log(LogLevel::DEBUG, "Running custom handler");
-                    if ($this->handler) {
+                    if (\method_exists($this, 'execute')) {
+                        $this->execute();
+                    } else if ($this->handler) {
                         $this->totalJob++;
                         \call_user_func_array($this->handler, [$this]);
                     }
@@ -128,7 +120,7 @@ class CustomWorker implements WorkerInterface
             }
             $this->sleep();
         }
-        Event::trigger('beforeStop', $this);
+        Event::trigger('onWorkerStop', $this);
         $this->unregisterWorker();
     }
 
@@ -165,6 +157,9 @@ class CustomWorker implements WorkerInterface
      */
     public function log($level, $message, $context = [])
     {
+        if (!$this->logger) {
+            $this->logger = new Log();
+        }
         $this->logger->log($level, "[" . $this->logTag . "] " . $message, $context);
     }
 
@@ -174,8 +169,13 @@ class CustomWorker implements WorkerInterface
     private function startup()
     {
         $this->registerSigHandlers();
-        Event::trigger('beforeFirstFork', $this);
+        Event::trigger('onWorkerStart', $this);
         $this->registerWorker();
+        \register_shutdown_function(function() {
+            if ($this->workerPid == \getmypid()) {
+                $this->unregisterWorker();
+            }
+        });
     }
 
     /**
@@ -213,14 +213,16 @@ class CustomWorker implements WorkerInterface
     public function writeStatistics()
     {
         $statisticsFile = WorkerManager::getConf('STATISTICS_FILE');
-        $workerStatusStr = posix_getpid() . "\t" . str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 7)
-            . " " . str_pad(static::class, WorkerManager::$_maxWorkerTypeLength)
-            . " ";
-        $workerStatusStr .= str_pad($this->name, WorkerManager::$_maxQueueNameLength)
-            . " " .  str_pad($this->totalLoop, 13)
-            . " " . str_pad($this->totalJob, 13)
-            . " " . str_pad($this->busy ? '[busy]' : '[idle]', 6) . "\n";
-        file_put_contents($statisticsFile, $workerStatusStr, FILE_APPEND);
+
+        file_put_contents($statisticsFile,
+            str_pad(posix_getpid(), 10) .
+            str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 8) .
+            str_pad(static::class, WorkerManager::$_maxWorkerTypeLength) .
+            str_pad($this->name, WorkerManager::$_maxQueueNameLength) .
+            str_pad(Timer::count(), 8) .
+            str_pad($this->totalLoop, 13) .
+            str_pad($this->totalJob, 13) .
+            str_pad($this->busy ? '[busy]' : '[idle]', 6) . "\n", FILE_APPEND);
     }
 
     /**

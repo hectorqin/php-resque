@@ -70,7 +70,7 @@ class ResqueScheduler
 	{
 		$timestamp = self::getTimestamp($timestamp);
 		$redis = Resque::redis();
-		$redis->rpush('delayed:' . $timestamp, json_encode($item));
+		$redis->rpush('delayed:' . $timestamp, serialize($item));
 
 		$redis->zadd(self::$delayQueueName, $timestamp, $timestamp);
 	}
@@ -115,7 +115,7 @@ class ResqueScheduler
     public static function removeDelayed($queue, $class, $args)
     {
        $destroyed=0;
-       $item=json_encode(self::jobToHash($queue, $class, $args));
+       $item=serialize(self::jobToHash($queue, $class, $args));
        $redis=Resque::redis();
 
        foreach($redis->keys('delayed:*') as $key)
@@ -143,7 +143,7 @@ class ResqueScheduler
     public static function removeDelayedJobFromTimestamp($timestamp, $queue, $class, $args)
     {
         $key = 'delayed:' . self::getTimestamp($timestamp);
-        $item = json_encode(self::jobToHash($queue, $class, $args));
+        $item = serialize(self::jobToHash($queue, $class, $args));
         $redis = Resque::redis();
         $count = $redis->lrem($key, 0, $item);
         self::cleanupTimestamp($key, $timestamp);
@@ -166,7 +166,7 @@ class ResqueScheduler
 			'class' => $class,
 			'queue' => $queue,
 		);
-        $job['id'] = md5(json_encode($job));
+        $job['id'] = md5(serialize($job));
         return $job;
 	}
 
@@ -252,7 +252,7 @@ class ResqueScheduler
 		$timestamp = self::getTimestamp($timestamp);
 		$key = 'delayed:' . $timestamp;
 
-		$item = json_decode(Resque::redis()->lpop($key), true);
+		$item = \unserialize(Resque::redis()->lpop($key));
 
 		self::cleanupTimestamp($key, $timestamp);
 		return $item;
