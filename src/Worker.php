@@ -63,6 +63,11 @@ class Worker implements WorkerInterface
 
     private $workerPid = 0;
 
+    private $sleepUntil = 0;
+
+    public $workerGroupCount = 1;
+    public $workerIndex = 0;
+
     /**
      * Instantiate a new worker, given a list of queues that it should be working
      * on. The list of queues should be supplied in the priority that they should
@@ -199,7 +204,7 @@ class Worker implements WorkerInterface
                         $this->updateProcLine('Waiting for ' . implode(',', $this->queues));
                     }
 
-                    usleep($interval * 1000000);
+                    $this->sleep();
                 }
 
                 continue;
@@ -245,6 +250,26 @@ class Worker implements WorkerInterface
 
         Event::trigger('onWorkerStop', $this);
         $this->unregisterWorker();
+    }
+
+    /**
+     * 休眠
+     * @param bool $start 是否开始新一轮休眠.
+     * @param bool $force 是否强制休眠.
+     * @return void
+     */
+    public function sleep($start = true, $force = false)
+    {
+        if ($start) {
+            $this->sleepUntil = time() + $this->interval;
+            \usleep($this->interval * 1000000);
+        } else {
+            if ($this->sleepUntil > time()) {
+                \usleep(($this->sleepUntil - time()) * 1000000);
+            } else if ($force) {
+                $this->sleep();
+            }
+        }
     }
 
     /**
@@ -595,6 +620,12 @@ class Worker implements WorkerInterface
     {
         if (isset($options['blocking'])) {
             $this->blocking = $options['blocking'];
+        }
+        if (isset($options['workerGroupCount'])) {
+            $this->workerGroupCount = $options['workerGroupCount'];
+        }
+        if (isset($options['workerIndex'])) {
+            $this->workerIndex = $options['workerIndex'];
         }
         return $this;
     }

@@ -6,6 +6,7 @@ use InvalidArgumentException;
 use Resque\Job;
 use Resque\Resque;
 use Resque\ResqueScheduler;
+use Resque\WorkerManager;
 use think\Exception as ThinkException;
 use think\exception\ClassNotFoundException;
 
@@ -346,7 +347,7 @@ class SimpleJob
     }
 
     public function log($message){
-        $this->job->worker->logger->log('info', $message);
+        WorkerManager::log($message);
     }
 
     public function tearDown()

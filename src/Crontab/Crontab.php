@@ -70,7 +70,7 @@ class Crontab
      * @return void
      * @throws Exception
      */
-    public function __construct($config)
+    public function __construct($config, $serializable = true)
     {
         if (!isset($config['name']) || !$config['name']) {
             throw new Exception('Crontab must have a name');
@@ -81,10 +81,13 @@ class Crontab
         if (!isset($config['handler']) || !$config['handler']) {
             throw new Exception('Crontab must have handler');
         }
-        try {
-            \serialize($config['handler']);
-        } catch (\Throwable $th) {
-            throw new Exception('Crontab handler must can be serialized');
+
+        if ($serializable) {
+            try {
+                \serialize($config['handler']);
+            } catch (\Throwable $th) {
+                throw new Exception('Crontab handler must can be serialized');
+            }
         }
 
         if (!SimpleJob::getCallable($config['handler'])) {

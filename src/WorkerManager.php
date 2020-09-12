@@ -13,7 +13,7 @@ class WorkerManager
     const STATUS_STARTING = 1;
     const STATUS_RUNNING  = 2;
     const STATUS_SHUTDOWN = 3;
-    const VERSION         = 1.0;
+    const VERSION         = "1.0.1";
 
     public static $_config = array(
         'DAEMONIZE'       => false,
@@ -58,7 +58,9 @@ class WorkerManager
 
         'WORKER_CRONTAB'  => [
 
-        ]
+        ],
+
+        'SIMPLE_CRONTAB'  => false,
     );
 
     public static $logger     = null;
@@ -82,6 +84,15 @@ class WorkerManager
     public static $_maxWorkerTypeLength = 25;
 
     public static $_maxQueueNameLength = 25;
+
+    public static $lastSimpleCrontabRunTime = 0;
+
+    public static $workersCount = 0;
+
+    public static $maxOneWorkerCrontabCount = 0;
+    public static $currentWorkerCrontabCount = 0;
+    public static $currentWorkerType = '';
+    public static $currentWorkerInfo = [];
 
     /**
      * 获取环境配置
@@ -147,10 +158,10 @@ class WorkerManager
         static::registerTimer();
         // 注册Crontab
         static::registerCrontab();
-        // 初始化所有worker实例
-        static::initWorkers();
         // 安装信号处理函数
         static::installSignal();
+        // 初始化所有worker实例
+        static::initWorkers();
         // 监控所有子进程（worker进程）
         static::monitorWorkers();
     }
@@ -233,26 +244,40 @@ class WorkerManager
                 while (!is_file($statisticsFile)) {
                     sleep(1);
                 }
-                $content = file_get_contents($statisticsFile);
-                $arr     = explode("\n", $content);
+                while (true) {
+                    $content = file_get_contents($statisticsFile);
+                    $arr     = explode("\n", $content);
 
-                $totalMemory = 0;
-                $totalTimers = 0;
-                $totalLoop   = 0;
-                $totalJob    = 0;
-                $contentArr  = [];
-                $workersInfo = [];
-                foreach ($arr as $value) {
-                    $items = preg_split('/ +/', $value);
-                    if (is_numeric($items[0])) {
-                        $totalMemory += str_replace("M", "", $items[1]);
-                        $totalTimers += $items[4];
-                        $totalLoop += $items[5];
-                        $totalJob += $items[6];
-                        $workersInfo[$items[2]][] = $value;
-                    } else {
-                        $contentArr[] = $value;
+                    $totalWorker = 0;
+                    $totalMemory = 0;
+                    $totalTimers = 0;
+                    $totalLoop   = 0;
+                    $totalJob    = 0;
+                    $contentArr  = [];
+                    $workersInfo = [];
+
+                    foreach ($arr as $value) {
+                        $items = preg_split('/ +/', $value);
+                        if (is_numeric($items[0])) {
+                            $totalWorker++;
+                            $totalMemory += str_replace("M", "", $items[1]);
+                            $totalTimers += $items[4];
+                            $totalLoop += $items[5];
+                            $totalJob += $items[6];
+                            $workersInfo[$items[2]][] = $value;
+                        } else {
+                            $contentArr[] = $value;
+                        }
                     }
+
+                    // 等待全部worker写入状态信息
+                    $matches = [];
+                    if (preg_match('/(\d+)\sworker\sprocesses/', $content, $matches)) {
+                        if (isset($matches[1]) && $totalWorker > $matches[1]) {
+                            break;
+                        }
+                    }
+                    \sleep(1);
                 }
                 $content = \implode("\n", $contentArr);
                 foreach ($workersInfo as $group) {
@@ -448,13 +473,24 @@ class WorkerManager
         // 注册 crontab
         $crontabs = static::getConf('WORKER_CRONTAB');
         if ($crontabs) {
+            if (!static::getConf('SIMPLE_CRONTAB') && (!static::isExistWorkerType('CrontabWorker') || !static::isExistWorkerType('SchedulerWorker'))) {
+                throw new Exception("Must start a worker[\\Resque\\CrontabWorker] and a worker[\\Resque\\SchedulerWorker] with SIMPLE_CRONTAB config disabled");
+            } else if (static::getConf('SIMPLE_CRONTAB') && static::isExistWorkerType('CrontabWorker')) {
+                throw new Exception("Cannot start a worker[\\Resque\\CrontabWorker] with SIMPLE_CRONTAB config enabled");
+            }
             $crontabManager = CrontabManager::instance();
             foreach ($crontabs as $crontab) {
-                if (!$crontabManager->register(new Crontab($crontab))) {
+                if (!$crontabManager->register(new Crontab($crontab, !static::getConf('SIMPLE_CRONTAB')))) {
                     throw new Exception("Invalid crontab rule {$crontab['rule']}");
                 }
             }
         }
+    }
+
+    public static function isExistWorkerType($type)
+    {
+        $workerTypes = \array_column(static::getConf('WORKER_GROUP'), 'type');
+        return \in_array($type, $workerTypes) || \in_array('\\Resque\\' . $type, $workerTypes) || \in_array('Resque\\' . $type, $workerTypes);
     }
 
     /**
@@ -474,6 +510,9 @@ class WorkerManager
             throw new Exception('only support one WORKER_GROUP');
         }
 
+        self::$workersCount = \array_reduce(\array_column($WORKER_GROUP, 'nums'), function($carry, $item) {
+            return $carry + $item;
+        }, 0);
         foreach ($WORKER_GROUP as $groupId => $worker) {
             if (isset($worker['queue'])) {
                 static::log("*** Init workerGroup {$groupId}, {$worker['nums']} processes, working on {$worker['queue']}");
@@ -484,8 +523,10 @@ class WorkerManager
             for ($i = 0; $i < (int) $worker['nums']; ++$i) {
                 $interval = isset($worker['interval']) ? $worker['interval'] : static::getConf('INTERVAL');
                 static::initOneWorker($worker['queue'], $worker['type'], [
-                    'interval' => $interval,
-                    'groupID'  => $groupId,
+                    'interval'         => $interval,
+                    'groupID'          => $groupId,
+                    'workerGroupCount' => $worker['nums'],
+                    'workerIndex'      => $i,
                 ] + $worker);
             }
         }
@@ -514,12 +555,27 @@ class WorkerManager
         } else {
             static::log("*** Init one worker[$type]");
         }
+        static::$currentWorkerType = basename(\str_replace('\\', '/', $type));
+        static::$currentWorkerInfo = [
+            "queue"  => $queue,
+            "type"   => $type,
+            "option" => $option,
+        ];
+
         if (static::getConf('NO_FORK')) {
             $worker = new $type($queueArr);
             if (!$worker instanceof \Resque\WorkerInterface) {
                 static::stopAll();
                 static::log("*** Worker class [$type] not implements \\Resque\\WorkerInterface");
-                return;
+                exit();
+            }
+            if (static::getConf('SIMPLE_CRONTAB')) {
+                if ($worker instanceof \Resque\CrontabWorker) {
+                    static::stopAll();
+                    static::log("*** Cannot start a worker[\\Resque\\CrontabWorker] with SIMPLE_CRONTAB config enabled");
+                    exit();
+                }
+                Timer::add(1, [static::class, 'simpleCrontabRunner'], [$worker], true);
             }
             if (\method_exists($worker, 'setOption')) {
                 $worker->setOption($option);
@@ -538,19 +594,33 @@ class WorkerManager
             static::log("*** Could not fork worker");
             exit();
         } else if ($pid > 0) { // master, record the child pid
-            static::$workerPids[$pid] = array(
+            static::$workerPids[$pid] = [
                 "queue"  => $queue,
                 "type"   => $type,
                 "option" => $option,
-            );
+            ];
+            static::$currentWorkerType = 'WorkerManager';
+            static::$currentWorkerInfo = [
+                "queue"  => '',
+                "type"   => 'WorkerManager',
+                "option" => [],
+            ];
         } else if ($pid === 0) { // Child, start the worker 子进程开启worker
             // 子进程清除所有timer
             Timer::delAll();
             $worker = new $type($queueArr);
             if (!$worker instanceof \Resque\WorkerInterface) {
-                static::stopAll();
+                posix_kill(static::$managerPid, SIGQUIT);
                 static::log("*** Worker class [$type] not implements \\Resque\\WorkerInterface");
                 return;
+            }
+            if (static::getConf('SIMPLE_CRONTAB')) {
+                if ($worker instanceof \Resque\CrontabWorker) {
+                    posix_kill(static::$managerPid, SIGQUIT);
+                    static::log("*** Cannot start a worker[\\Resque\\CrontabWorker] with SIMPLE_CRONTAB config enabled");
+                    exit();
+                }
+                Timer::add(1, [static::class, 'simpleCrontabRunner'], [$worker], true);
             }
             if (\method_exists($worker, 'setOption')) {
                 $worker->setOption($option);
@@ -780,6 +850,36 @@ class WorkerManager
     }
 
     /**
+     * 简单crontab执行逻辑
+     * @param mixed $worker
+     * @return void
+     */
+    public static function simpleCrontabRunner($worker)
+    {
+        // if (!static::$lastSimpleCrontabRunTime && (int)date('s') !== 0) {
+        //     // 刚启动，且当前秒数不等于0跳过
+        //     $worker->sleep(false);
+        //     return;
+        // }
+        if (static::$lastSimpleCrontabRunTime && date("YmdHi", static::$lastSimpleCrontabRunTime) === date("YmdHi")) {
+            // 当前分钟已经执行过
+            $worker->sleep(false);
+            return;
+        }
+        static::$lastSimpleCrontabRunTime = time();
+
+        $crontabs = CrontabManager::instance()->parse();
+
+        static::$maxOneWorkerCrontabCount = \ceil(count($crontabs) / static::$workersCount);
+
+        foreach ($crontabs as $crontab) {
+            CrontabWorker::runCrontab($crontab, '', true, $worker);
+        }
+        static::$currentWorkerCrontabCount = 0;
+        $worker->sleep(false);
+    }
+
+    /**
      * 对象转字符串
      *
      * @param mixed $value
@@ -807,14 +907,14 @@ class WorkerManager
      * 记录日志
      *
      * @param mixed $msg
-     * @param array $extra
      * @param string $level
+     * @param array $extra
      * @return void
      */
-    public static function log($msg, $extra = array(), $level = 'info')
+    public static function log($msg, $level = 'info', $extra = [])
     {
         if (static::$logger) {
-            static::$logger->log($level, '[WorkerManager:' . static::$managerPid . '] ' . static::convertToString($msg), $extra);
+            static::$logger->log($level, '[' . static::$currentWorkerType . ':' . \getmypid() . '] ' . static::convertToString($msg), $extra);
         } else if (!function_exists('posix_isatty') || (get_resource_type(STDOUT) == 'stream' && posix_isatty(STDOUT))) {
             echo static::convertToString($msg), PHP_EOL;
         }
@@ -829,6 +929,9 @@ class WorkerManager
         $error = error_get_last();
         if ($error !== null) {
             error_log("PID: " . \getmypid() . "  " . static::convertToString($error) . "\n", 3, __DIR__ . "/resque-error.log");
+        }
+        if (\getmypid() == static::$managerPid) {
+            self::exitNow();
         }
     }
 }

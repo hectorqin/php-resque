@@ -38,6 +38,11 @@ class SchedulerWorker implements WorkerInterface
 
     private $workerPid = 0;
 
+    private $sleepUntil = 0;
+
+    public $workerGroupCount = 1;
+    public $workerIndex = 0;
+
     /**
      * Instantiate a new worker, given a list of queues that it should be working
      * on. The list of queues should be supplied in the priority that they should
@@ -87,6 +92,7 @@ class SchedulerWorker implements WorkerInterface
                 $this->updateProcLine('Waiting for Delayed Items');
                 $this->handleDelayedItems();
             }
+            $this->log(LogLevel::DEBUG, 'Sleeping for  ' . $this->interval);
             $this->sleep();
         }
         Event::trigger('onWorkerStop', $this);
@@ -138,12 +144,23 @@ class SchedulerWorker implements WorkerInterface
     }
 
     /**
-     * Sleep for the defined interval.
+     * 休眠
+     * @param bool $start 是否开始新一轮休眠.
+     * @param bool $force 是否强制休眠.
+     * @return void
      */
-    protected function sleep()
+    public function sleep($start = true, $force = false)
     {
-        $this->log(LogLevel::DEBUG, 'Sleeping for  ' . $this->interval);
-        usleep($this->interval * 1000000);
+        if ($start) {
+            $this->sleepUntil = time() + $this->interval;
+            \usleep($this->interval * 1000000);
+        } else {
+            if ($this->sleepUntil > time()) {
+                \usleep(($this->sleepUntil - time()) * 1000000);
+            } else if ($force) {
+                $this->sleep();
+            }
+        }
     }
 
     /**
@@ -285,6 +302,12 @@ class SchedulerWorker implements WorkerInterface
      */
     public function setOption($options)
     {
+        if (isset($options['workerGroupCount'])) {
+            $this->workerGroupCount = $options['workerGroupCount'];
+        }
+        if (isset($options['workerIndex'])) {
+            $this->workerIndex = $options['workerIndex'];
+        }
         return $this;
     }
 

@@ -20,6 +20,9 @@ class CrontabWorker extends CustomWorker
 
     private $isFirstRun = true;
 
+    public $workerGroupCount = 1;
+    public $workerIndex = 0;
+
     public function __construct($queue = '')
     {
         $this->queue = is_array($queue) ? $queue[0] : $queue;
@@ -41,6 +44,12 @@ class CrontabWorker extends CustomWorker
         if (isset($options['workerQueue'])) {
             $this->workerQueue = $options['workerQueue'];
         }
+        if (isset($options['workerGroupCount'])) {
+            $this->workerGroupCount = $options['workerGroupCount'];
+        }
+        if (isset($options['workerIndex'])) {
+            $this->workerIndex = $options['workerIndex'];
+        }
         return $this;
     }
 
@@ -56,20 +65,25 @@ class CrontabWorker extends CustomWorker
             $this->isFirstRun = false;
             return;
         }
+        $workerQueue = $this->workerQueue;
+
         foreach ($this->crontabManager->parse() as $crontab) {
-            $this->run($crontab);
+            static::runCrontab($crontab, $workerQueue);
         }
     }
 
     /**
      * 执行crontab
-     * @param Crontab $crontab
+     * @param Crontab $crontab 定时任务对象
+     * @param string $workerQueue 使用队列执行定时任务时需要队列名称
+     * @param bool $useTimer 是否使用timer
+     * @param mixed $currentWorker 当前worker
      * @return void
      */
-    public function run($crontab)
+    public static function runCrontab($crontab, $workerQueue, $useTimer = false, $currentWorker = null)
     {
         if (!$crontab instanceof Crontab || !$crontab->getExecuteTime()) {
-            $this->log(LogLevel::DEBUG, "not crontab");
+            WorkerManager::log("not crontab", LogLevel::DEBUG);
             return;
         }
         $executeTime = $crontab->getExecuteTime();
@@ -79,7 +93,7 @@ class CrontabWorker extends CustomWorker
         $lockKey  = "crontab-" . sha1($crontab->getName() . $crontab->getRule() . $executeTime);
         $isLocked = Resque::redis()->set($lockKey, \getmypid(), ['NX', 'EX' => $crontab->getMutexExpires() ?: 60 - date('s', time())]);
         if (!$isLocked) {
-            $this->log(LogLevel::DEBUG, "Crontab {$crontab->getName()} loop {$executeTime} lock failed");
+            WorkerManager::log("Crontab {$crontab->getName()} loop {$executeTime} lock failed", LogLevel::DEBUG);
             return;
         }
 
@@ -89,14 +103,13 @@ class CrontabWorker extends CustomWorker
             $singletonLockKey = "crontab-singleton-" . sha1($crontab->getName() . $crontab->getRule());
         }
 
-        $this->log(LogLevel::DEBUG, "Crontab {$crontab->getName()} loop {$executeTime} lock succeed");
+        WorkerManager::log("Crontab {$crontab->getName()} loop {$executeTime} lock succeed", LogLevel::DEBUG);
 
         $diff     = $executeTime - time();
         $callback = $crontab->getCallback();
         $params   = $crontab->getParams();
 
-        // 使用队列
-        SimpleJob::{$this->workerQueue}([
+        $args = [
             'handler'             => $callback,
             'params'              => $params,
             'executeTime'         => $executeTime,
@@ -106,7 +119,40 @@ class CrontabWorker extends CustomWorker
             'singletonLockExpire' => $crontab->getMutexExpires() ?: (60 - date('s', time())),
             'beforeHandle'        => [static::class, 'clearCrontabJobLock'],
             'onComplete'          => [static::class, 'clearCrontabJobSingletonLock'],
-        ], true, $diff);
+        ];
+        if ($useTimer) {
+            $handler = function() use($args, $workerQueue, $currentWorker) {
+                $job = new Job($workerQueue, [
+                    'id'    => time(),
+                    'class' => SimpleJob::class,
+                    'args'  => [$args],
+                    'queue' => $workerQueue
+                ]);
+                $job->worker = $currentWorker;
+                $job->perform();
+            };
+            WorkerManager::$currentWorkerCrontabCount++;
+            if ($diff <= 0) {
+                try {
+                    \call_user_func_array($handler, []);
+                } catch (\Throwable $th) {
+                    WorkerManager::log($th, LogLevel::CRITICAL);
+                }
+            } else {
+                Timer::add($diff, $handler, [], false);
+            }
+            // 当前进程最多只能处理 WorkerManager::$maxOneWorkerCrontabCount 个任务
+            WorkerManager::log("Current worker crontab count " . WorkerManager::$currentWorkerCrontabCount . " /" . WorkerManager::$maxOneWorkerCrontabCount, LogLevel::DEBUG);
+            if (WorkerManager::$currentWorkerCrontabCount >= WorkerManager::$maxOneWorkerCrontabCount) {
+                // 强制休眠一轮
+                $currentWorker->sleep(false, true);
+            }
+            return true;
+        } else {
+            // 使用队列
+            SimpleJob::{$workerQueue}($args, true, $diff);
+            return true;
+        }
     }
 
     /**
@@ -145,7 +191,7 @@ class CrontabWorker extends CustomWorker
      * 睡眠至当前分钟结束
      * @return void
      */
-    public function sleep()
+    public function sleep($start = true, $force = false)
     {
         $current = date('s', time());
         $sleep   = 60 - $current;

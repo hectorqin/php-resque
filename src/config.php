@@ -71,4 +71,7 @@ return [
     'worker_crontab' => [
 
     ],
+
+    // 为true时，将不能启动 CrontabWorker 进程，直接使用 Workers 中的 timer 来实现，无法持久化，但是支持闭包handler
+    'simple_crontab' => false,
 ];
