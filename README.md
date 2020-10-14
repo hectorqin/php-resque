@@ -143,7 +143,7 @@ use Resque\Job\SimpleJob;
 
 // 投递到 default 队列
 SimpleJob::default([
-    'hanlder' => ['\\app\\index\\controller\\Index', 'job'],
+    'handler' => ['\\app\\index\\controller\\Index', 'job'],
     'params'  => [
         'hello' => 0
     ], // ThinkPHP 支持参数绑定，其他框架请按照参数顺序传值
@@ -151,7 +151,7 @@ SimpleJob::default([
 
 // 投递到 task 队列，延迟10秒执行
 SimpleJob::task([
-    'hanlder' => ['\\app\\index\\controller\\Index', 'job'],
+    'handler' => ['\\app\\index\\controller\\Index', 'job'],
     'params'  => [
         'hello' => 0
     ], // ThinkPHP 支持参数绑定，其他框架请按照参数顺序传值
@@ -159,7 +159,7 @@ SimpleJob::task([
 
 // 投递到 task 队列，定时执行
 SimpleJob::task([
-    'hanlder' => ['\\app\\index\\controller\\Index', 'job'],
+    'handler' => ['\\app\\index\\controller\\Index', 'job'],
     'params'  => [
         'hello' => 0
     ], // ThinkPHP 支持参数绑定，其他框架请按照参数顺序传值

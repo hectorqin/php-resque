@@ -16,7 +16,7 @@ return [
     'worker_group'    => [
         [
             "type"  => "Worker",
-            "queue" => "deault",
+            "queue" => "default",
             "nums"  => 1,
         ],
     ],
