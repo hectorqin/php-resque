@@ -6,5 +6,9 @@ if (class_exists("\\think\\App")) {
         \think\Console::addDefaultCommands([
             \Resque\ThinkPHP\Command\Resque::class,
         ]);
+        $redisConfig = \think\facade\Config::get('resque.redis_backend');
+        if ($redisConfig) {
+            \Resque\Resque::setBackend($redisConfig, isset($redisConfig['database']) ? $redisConfig['database'] : 0);
+        }
     }
 }
