@@ -24,10 +24,9 @@ trait Controller
 
         \array_shift($argv);
 
-        $options = \getopt('v', ['vv', 'vvv']);
-        if (isset($options['vv']) || isset($options['vvv'])) {
+        if (in_array('-vv', $argv) || in_array('-vvv', $argv)) {
             \putenv('VVERBOSE=1');
-        } else if (isset($options['v'])) {
+        } else if (in_array('-v', $argv)) {
             \putenv('VERBOSE=1');
         }
 
