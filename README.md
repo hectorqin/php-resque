@@ -1,5 +1,16 @@
 # PHP-Resque
 
+- [PHP-Resque](#php-resque)
+  - [安装](#安装)
+  - [配置](#配置)
+  - [使用](#使用)
+    - [启动worker](#启动worker)
+    - [投递任务](#投递任务)
+      - [简单任务](#简单任务)
+      - [自定义任务](#自定义任务)
+    - [监听事件](#监听事件)
+    - [快捷投递任务](#快捷投递任务)
+
 在 [chrisboulton/php-resque](https://github.com/chrisboulton/php-resque) 的基础上进行了如下改造：
 
 - 采用psr-4自动加载规范
@@ -139,6 +150,8 @@ php think resque start -d
 ```
 
 ### 投递任务
+
+投递任务之前需要设置 ResqueRedis 的配置, `Resque::setBackend($redis_backend);`，TP5 / TP6 默认自动使用resque配置文件。TP3.2需要手动配置 `Resque::setBackend(C('RESQUE_CONFIG.redis_backend'));`。
 
 #### 简单任务
 
