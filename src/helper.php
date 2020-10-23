@@ -14,11 +14,5 @@ if (class_exists("\\think\\App")) {
         if ($redisConfig) {
             \Resque\Resque::setBackend($redisConfig, isset($redisConfig['database']) ? $redisConfig['database'] : 0);
         }
-    } else if (function_exists('C')){
-        // TP3.2配置
-        $redisConfig = \C('RESQUE_CONFIG.redis_backend');
-        if ($redisConfig) {
-            \Resque\Resque::setBackend($redisConfig, isset($redisConfig['database']) ? $redisConfig['database'] : 0);
-        }
     }
 }
