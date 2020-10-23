@@ -3,6 +3,7 @@ namespace Resque\Job;
 
 use Exception;
 use InvalidArgumentException;
+use Resque\Concern\MagicCall;
 use Resque\Job;
 use Resque\Resque;
 use Resque\ResqueScheduler;
@@ -20,6 +21,7 @@ use think\exception\ClassNotFoundException;
  */
 class SimpleJob
 {
+    use MagicCall;
     /**
      * 最大重试次数
      */

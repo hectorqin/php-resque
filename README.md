@@ -241,6 +241,8 @@ MyJob::enqueueAt([
 MyJob::enqueueAt([
     'hello' => 1
 ], time() + 3600);
+
+(new MyJob())->delay(5)->executeAsync($param1, $param2);
 ```
 
 ### 监听事件
@@ -268,4 +270,37 @@ Event::listen('afterEnqueue', [$this, 'afterEnqueue']);
 Event::listen('afterSchedule', [$this, 'afterSchedule']);
 // 延迟/定时任务进入执行队列前事件
 Event::listen('beforeDelayedEnqueue', [$this, 'beforeDelayedEnqueue']);
+```
+
+### 快捷投递任务
+
+```php
+Class Test
+{
+    use \Resque\Concern\MagicCall;
+
+    /**
+     * 任务执行 handler
+     */
+    function testResque($name)
+    {
+        trace('Hello ' . $name);
+    }
+
+    function test()
+    {
+        $this->setDefaultQueue('default');
+        // 任务 handler方法名 + Async 即可投递任务，参数顺序保持一致，方便调试
+        $this->testResqueAsync('hector');
+        $this->delay(5)->testResqueAsync('hector');
+        $this->at(time() + 10)->testResqueAsync('hector');
+        $this->at(time() + 15)->handler([\get_class(), 'testResque'], [
+            'hector'
+        ])->send();
+    }
+}
+
+$test = new Test();
+$test->test();
+
 ```
