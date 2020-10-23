@@ -14,7 +14,7 @@ trait Controller
 
         $config = [];
         if (\defined('THINK_VERSION') && \version_compare(\THINK_VERSION, '3.2', '>=') && \function_exists('C')) {
-            $config = \C('RESQUE_CONFIG', []);
+            $config = \C('RESQUE_CONFIG', null, []);
         }
 
         global $argv;

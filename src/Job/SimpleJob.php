@@ -194,8 +194,8 @@ class SimpleJob
         if (!$handler instanceof self && !$params instanceof self) {
             $this->log(\var_export($handler, true) . "\n" . \var_export($params, true));
         }
-        if (\class_exists("\\think\\App")) {
-            // TP框架支持参数绑定
+        if (class_exists("\\think\\App") && \defined('\\think\\App::VERSION')) {
+            // TP5/6 框架支持参数绑定
             /** @var \think\App $app */
             $app = app();
             return $app->invoke($handler, (array)$params);
