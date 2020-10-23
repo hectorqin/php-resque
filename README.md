@@ -10,6 +10,9 @@
 - 支持Timer定时器功能
 - 支持Crontab定时任务功能
 - 支持ThinkPHP5/6命令行使用
+- 支持THinkPHP3.2控制器CLI模式使用
+- 提供Controller trait便于其它框架启动worker
+- 提供MagicCall trait便于提交队列任务
 
 ## 安装
 
@@ -19,7 +22,10 @@ composer require hectorqin/php-resque
 
 ## 配置
 
+TP5/6 默认获取 resque 配置文件, TP3.2 默认获取 RESQUE_CONFIG 配置
+
 ```php
+
 <?php
 
 use Psr\Log\LogLevel;
