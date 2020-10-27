@@ -308,6 +308,8 @@ Class Test
 
     function test()
     {
+        // 设置默认同步执行，不使用队列，可用于调试
+        // $this->setSync(true);
         $this->setDefaultQueue('default');
         // 任务 handler方法名 + Async 即可投递任务，参数顺序保持一致，方便调试
         $this->testResqueAsync('hector');
@@ -316,6 +318,9 @@ Class Test
         $this->at(time() + 15)->handler([\get_class(), 'testResque'], [
             'hector'
         ])->send();
+
+        // 同步执行,不使用队列,调试用
+        $this->sync(true)->testResqueAsync('hector');
     }
 }
 
