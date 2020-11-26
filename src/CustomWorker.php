@@ -46,6 +46,8 @@ class CustomWorker implements WorkerInterface
     public $workerGroupCount = 1;
     public $workerIndex = 0;
 
+    public $logTag = '';
+
     /**
      * Instantiate a new worker, given a list of queues that it should be working
      * on. The list of queues should be supplied in the priority that they should
@@ -166,7 +168,7 @@ class CustomWorker implements WorkerInterface
      */
     private function updateProcLine($status)
     {
-        $processTitle = 'resque-scheduler-' . ResqueScheduler::VERSION . ': ' . $status;
+        $processTitle = $this->logTag . ': ' . $status;
         if (function_exists('cli_set_process_title') && PHP_OS !== 'Darwin') {
             @cli_set_process_title($processTitle);
         } else if (function_exists('setproctitle')) {

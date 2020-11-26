@@ -10,6 +10,7 @@ use think\console\input\Argument;
 use think\console\input\Option;
 use think\console\Output;
 use think\facade\Config;
+use think\facade\Hook;
 use think\facade\Log;
 
 class Resque extends Command
@@ -31,7 +32,8 @@ class Resque extends Command
         $this->setName('resque')
             ->setDescription('Resque worker manager')
             ->addArgument('operate', Argument::OPTIONAL, 'operate', self::OPERATE_STATUS)
-            ->addOption('daemonize', 'd', Option::VALUE_OPTIONAL);
+            ->addOption('daemonize', 'd', Option::VALUE_OPTIONAL, 'run as daemonize')
+            ->addOption('status_timeout', 't', Option::VALUE_OPTIONAL, 'timeout for fetch status');
 
         if (version_compare(\think\App::VERSION, '5.1.0', '>=') && version_compare(\think\App::VERSION, '6.0.0', '<')) {
             self::$frameworkMainVersion = 5;
@@ -77,7 +79,12 @@ class Resque extends Command
             \putenv('VERBOSE=1');
         }
 
+        if ($input->hasOption('status_timeout')) {
+            \putenv('STATUS_TIMEOUT=' . $input->getOption('status_timeout'));
+        }
+
         try {
+            Hook::listen('before_resque_start');
             WorkerManager::run();
         } catch (\Throwable $t){
             Log::record($t->getMessage() . "\n" . $t->getTraceAsString());

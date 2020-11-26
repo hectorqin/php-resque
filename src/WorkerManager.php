@@ -244,9 +244,16 @@ class WorkerManager
                 while (!is_file($statisticsFile)) {
                     sleep(1);
                 }
+                $timeout = static::getConf('STATUS_TIMEOUT');
+                $timeout = is_int($timeout) && $timeout > 0 ? (time() + $timeout) : 0;
+                $totalProcesses = 0;
+                $workersPIDInfo = [];
                 while (true) {
                     $content = file_get_contents($statisticsFile);
                     $arr     = explode("\n", $content);
+                    if (count($arr) > 1) {
+                        $workersPIDInfo = \json_decode(\array_shift($arr), true) ?? [];
+                    }
 
                     $totalWorker = 0;
                     $totalMemory = 0;
@@ -255,6 +262,7 @@ class WorkerManager
                     $totalJob    = 0;
                     $contentArr  = [];
                     $workersInfo = [];
+                    $busyWorkers = $workersPIDInfo;
 
                     foreach ($arr as $value) {
                         $items = preg_split('/ +/', $value);
@@ -264,18 +272,31 @@ class WorkerManager
                             $totalTimers += $items[4];
                             $totalLoop += $items[5];
                             $totalJob += $items[6];
-                            $workersInfo[$items[2]][] = $value;
+                            $workersInfo[$items[2]][$items[0]] = $value;
+                            unset($busyWorkers[$items[0]]);
                         } else {
                             $contentArr[] = $value;
                         }
                     }
 
                     // 等待全部worker写入状态信息
-                    $matches = [];
-                    if (preg_match('/(\d+)\sworker\sprocesses/', $content, $matches)) {
-                        if (isset($matches[1]) && $totalWorker > $matches[1]) {
-                            break;
-                        }
+                    if (!$totalProcesses) {
+                        $totalProcesses = count($workersPIDInfo);
+                        // $matches = [];
+                        // if (preg_match('/(\d+)\sworker\sprocesses/', $content, $matches)) {
+                        //     if (isset($matches[1])) {
+                        //         $totalProcesses = $matches[1];
+                        //     }
+                        // }
+                    }
+
+                    if ($totalProcesses && $totalWorker > $totalProcesses) {
+                        break;
+                    }
+
+                    // 等待超时
+                    if (time() > $timeout) {
+                        break;
                     }
                     \sleep(1);
                 }
@@ -296,7 +317,23 @@ class WorkerManager
                 str_pad($totalJob, 13) .
                 str_pad("[Summary]", 6) . "\n";
 
+                if ($totalWorker <= $totalProcesses) {
+                    $content .= "\nFetch " . ($totalProcesses + 1 - $totalWorker) . " worker's status timeout.\n";
+                    $content .= str_pad('pid', 10) .
+                        str_pad('worker_type', static::$_maxWorkerTypeLength) .
+                        str_pad('queue', static::$_maxQueueNameLength) .
+                        str_pad("status\n", 7);
+                    foreach ($busyWorkers as $pid => $info) {
+                        $content .= str_pad($pid, 10) .
+                                str_pad($info['type'], static::$_maxWorkerTypeLength) .
+                                str_pad($info['queue'], static::$_maxQueueNameLength) .
+                                str_pad("[busy]\n", 7);
+                    }
+                }
                 static::log($content);
+                if (is_file($statisticsFile)) {
+                    @unlink($statisticsFile);
+                }
                 exit(0);
                 break;
             // 重启 worker
@@ -684,7 +721,7 @@ class WorkerManager
         $statisticsFile = static::getConf('STATISTICS_FILE');
         $workerGroup    = static::getConf('WORKER_GROUP');
 
-        // file_put_contents($statisticsFile, json_encode(self::$workerPids)."\n", FILE_APPEND);
+        file_put_contents($statisticsFile, json_encode(self::$workerPids, \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE)."\n", FILE_APPEND);
 
         $loadavg = function_exists('sys_getloadavg') ? array_map('round', sys_getloadavg(), array(2)) : array('-', '-', '-');
         file_put_contents($statisticsFile,
@@ -766,10 +803,10 @@ class WorkerManager
      */
     public static function exitNow()
     {
-        if (static::getConf('PIDFILE')) {
+        if (static::getConf('PIDFILE') && \file_exists(static::getConf('PIDFILE'))) {
             @unlink(static::getConf('PIDFILE'));
         }
-        if (static::getConf('STATISTICS_FILE')) {
+        if (static::getConf('STATISTICS_FILE') && \file_exists(static::getConf('STATISTICS_FILE'))) {
             @unlink(static::getConf('STATISTICS_FILE'));
         }
         static::log("*** Workers has been stopped");
@@ -786,7 +823,7 @@ class WorkerManager
     public static function setProcessTitle($title)
     {
         // >=php 5.5
-        if (function_exists('cli_set_process_title')) {
+        if (function_exists('cli_set_process_title') && PHP_OS !== 'Darwin') {
             @cli_set_process_title($title);
         }
         // 需要扩展

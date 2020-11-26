@@ -198,7 +198,7 @@ class SimpleJob
             // TP5/6 框架支持参数绑定
             /** @var \think\App $app */
             $app = app();
-            return $app->invoke($handler, (array)$params);
+            return $app->invoke($handler, is_array($params) ? $params : [$params]);
         } else {
             // 其余框架不支持参数绑定，直接回调
             $callable = static::getCallable($handler);
