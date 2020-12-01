@@ -416,6 +416,7 @@ class WorkerManager
      */
     public static function configureEnviroment()
     {
+        static::updateProcLine("Starting");
         static::$_status                             = static::STATUS_STARTING;
         static::$_globalStatistics['startTimestamp'] = time();
 
@@ -449,8 +450,6 @@ class WorkerManager
             Redis::prefix(static::getConf('PREFIX'));
         }
         unset($APP_INCLUDE, $logLevel, $logger);
-
-        static::setProcessTitle("resque-1.2: resque worker manager process");
     }
 
     /**
@@ -789,6 +788,7 @@ class WorkerManager
     public static function stopAll()
     {
         static::$_status = static::STATUS_SHUTDOWN;
+        static::updateProcLine("Stopping");
         static::log("*** Workers Stopping ...");
         // 向所有子进程发送SIGINT信号，表明关闭服务
         foreach (static::$workerPids as $workerPid => $workerInfo) {
@@ -820,8 +820,9 @@ class WorkerManager
      * @param string $title
      * @return void
      */
-    public static function setProcessTitle($title)
+    public static function updateProcLine($status)
     {
+        $title = sprintf("resque-%s: WorkerManager %s", Resque::VERSION, $status);
         // >=php 5.5
         if (function_exists('cli_set_process_title') && PHP_OS !== 'Darwin') {
             @cli_set_process_title($title);
@@ -839,6 +840,7 @@ class WorkerManager
     public static function monitorWorkers()
     {
         static::$_status = static::STATUS_RUNNING;
+        self::updateProcLine('Running');
         while (1) {
             static::$_globalStatistics['totalLoop']++;
             // 如果有信号到来，尝试触发信号处理函数

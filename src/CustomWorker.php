@@ -168,7 +168,7 @@ class CustomWorker implements WorkerInterface
      */
     private function updateProcLine($status)
     {
-        $processTitle = $this->logTag . ': ' . $status;
+        $processTitle = "resque-" . Resque::VERSION . ": " . $this->logTag . ' ' . $status;
         if (function_exists('cli_set_process_title') && PHP_OS !== 'Darwin') {
             @cli_set_process_title($processTitle);
         } else if (function_exists('setproctitle')) {
