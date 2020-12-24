@@ -21,27 +21,27 @@ class CustomWorker implements WorkerInterface
     /**
      * @var boolean True if this worker is paused.
      */
-    private $paused = false;
+    protected $paused = false;
     /**
      * @var boolean True if on the next iteration, the worker should shutdown.
      */
-    private $shutdown = false;
+    protected $shutdown = false;
 
     /**
      * 回调函数
      * @var mixed
      */
-    private $handler = null;
+    protected $handler = null;
 
-    private $name = '';
+    protected $name = '';
 
-    private $totalLoop = 0;
-    private $totalJob = 0;
-    private $busy = false;
+    protected $totalLoop = 0;
+    protected $totalJob = 0;
+    protected $busy = false;
 
-    private $workerPid = 0;
+    protected $workerPid = 0;
 
-    private $sleepUntil = 0;
+    protected $sleepUntil = 0;
 
     public $workerGroupCount = 1;
     public $workerIndex = 0;

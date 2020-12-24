@@ -194,7 +194,12 @@ class SimpleJob
         if (!$handler instanceof self && !$params instanceof self) {
             $this->log(\var_export($handler, true) . "\n" . \var_export($params, true));
         }
-        if (class_exists("\\think\\App") && \defined('\\think\\App::VERSION')) {
+        $isFunction = false;
+        if (\is_string($handler) && !\strpos($handler, '::')) {
+            // 说明是函数名称，直接使用 call_user_func_array
+            $isFunction = true;
+        }
+        if (!$isFunction && class_exists("\\think\\App") && \defined('\\think\\App::VERSION')) {
             // TP5/6 框架支持参数绑定
             /** @var \think\App $app */
             $app = app();

@@ -68,7 +68,9 @@ class CrontabWorker extends CustomWorker
         $workerQueue = $this->workerQueue;
 
         foreach ($this->crontabManager->parse() as $crontab) {
-            static::runCrontab($crontab, $workerQueue);
+            if (static::runCrontab($crontab, $workerQueue)) {
+                $this->totalJob++;
+            }
         }
     }
 
@@ -163,8 +165,10 @@ class CrontabWorker extends CustomWorker
     public static function clearCrontabJobLock($job)
     {
         if (isset($job->args['lockKey']) && $job->args['lockKey']) {
-            WorkerManager::log("clear crontab lock {$job->args['lockKey']}");
-            Resque::redis()->del($job->args['lockKey']);
+            WorkerManager::log("clear/reduce crontab lock {$job->args['lockKey']}");
+            // 设置为60s之后失效，避免当前周期还有worker重复创建任务
+            // Resque::redis()->del($job->args['lockKey']);
+            Resque::redis()->expire($job->args['lockKey'], 60);
         }
 
         if (isset($job->args['singletonLockKey']) && $job->args['singletonLockKey']) {
