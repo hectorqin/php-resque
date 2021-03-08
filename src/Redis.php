@@ -119,6 +119,21 @@ class Redis
     public function __construct($server, $database = null, $client = null)
     {
         try {
+            $this->initRedis($server, $database, $client);
+        } catch (RedisException $e) {
+            if ($this->driver) {
+                // 尝试断开持久化链接 redis扩展 >= 4.2.0
+                $this->driver->close();
+                // 重新连接redis
+                $this->initRedis($server, $database, $client);
+            } else {
+                throw $e;
+            }
+        }
+    }
+
+    private function initRedis($server, $database = null, $client = null) {
+        try {
             if (is_object($client)) {
                 $this->driver = $client;
             } else if (\is_array($server)) {
