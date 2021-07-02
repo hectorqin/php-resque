@@ -267,7 +267,7 @@ class Redis
      */
     public function __call($name, $args)
     {
-        if (in_array($name, $this->keyCommands)) {
+        if (in_array(strtolower($name), $this->keyCommands)) {
             if (is_array($args[0])) {
                 foreach ($args[0] as $i => $v) {
                     $args[0][$i] = self::$defaultNamespace . $v;
